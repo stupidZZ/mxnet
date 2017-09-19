@@ -67,6 +67,16 @@ inline const char* CublasGetErrorString(cublasStatus_t error) {
   return "Unknown cuBLAS status";
 }
 
+template <typename DType>
+inline DType __device__ CudaMax(DType a, DType b) {
+    return a > b ? a : b;
+}
+
+template <typename DType>
+inline DType __device__ CudaMin(DType a, DType b) {
+    return a < b ? a : b;
+}
+
 /*!
  * \brief Get string representation of cuRAND errors.
  * \param status The status.
@@ -159,6 +169,20 @@ inline const char* CurandGetErrorString(curandStatus_t status) {
 
 #endif  // MXNET_USE_CUDA
 
+#if !defined(_MSC_VER)
+
+#define CUDA_UNROLL _Pragma("unroll")
+
+#define CUDA_NOUNROLL _Pragma("nounroll")
+
+#else
+
+#define CUDA_UNROLL
+
+#define CUDA_NOUNROLL
+
+#endif
+
 #if MXNET_USE_CUDNN
 
 #include <cudnn.h>
@@ -215,6 +239,16 @@ static inline __device__ void atomicAdd(mshadow::half::half_t *address,
     old = atomicCAS(address_as_ui, assumed, old);
   } while (assumed != old);
 }
+
+template <typename DType>
+__device__ inline DType ldg(const DType* address) {
+#if __CUDA_ARCH__ >= 350
+    return __ldg(address);
+#else
+    return *address;
+#endif
+}
+
 #endif
 
 #endif  // MXNET_COMMON_CUDA_UTILS_H_

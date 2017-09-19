@@ -43,6 +43,20 @@ class CuDNNAlgoReg {
     return oss.str();
   }
 
+  template <typename Param>
+  std::string GetKey(const Param &param, const std::vector<TShape> &in_shape,
+                     const std::vector<TShape> &out_shape) {
+    std::ostringstream oss;
+    for (auto &i : in_shape)
+      oss << i << ";";
+    for (auto &i : out_shape)
+      oss << i << ";";
+    auto dict = param.__DICT__();
+    for (auto &k : dict)
+      oss << k.first << "=" << k.second << ";";
+    return oss.str();
+  }
+
   bool Find(std::string key, cudnnConvolutionFwdAlgo_t *fwd,
             cudnnConvolutionBwdDataAlgo_t *bwd,
             cudnnConvolutionBwdFilterAlgo_t *flt) {
