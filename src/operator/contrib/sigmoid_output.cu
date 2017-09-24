@@ -20,7 +20,7 @@ for (int i = blockIdx.x * blockDim.x + threadIdx.x; \
 namespace mshadow {
   namespace cuda {
 
-  template<typename DType>
+    template<typename DType>
     __global__ void SigmoidForwardKernel(
       const int count,
       const DType* bottom_data,
@@ -30,7 +30,7 @@ namespace mshadow {
       }
     }
 
-  template<typename DType>
+    template<typename DType>
     inline void SigmoidForward(const Tensor<gpu, 2, DType> &out,
       const Tensor<gpu, 2, DType> &data) {
       // LOG(INFO) << "SigmoidForward";
@@ -43,19 +43,42 @@ namespace mshadow {
       SigmoidOutput_CUDA_CHECK(cudaPeekAtLastError());
     }
 
-  template<typename DType>
-    __global__ void SigmoidBackwardKernel(
-      const int count,
-      const DType* out_data,
-	  const DType* out_label,
-      DType* in_grad,
-	  DType ignore_label) {
+
+    template<typename DType>
+    __global__ void SigmoidForwardKernel(const int count,
+                                         DType* out_data,
+                                         DType* loss_data,
+                                         const DType* bottom_data,
+                                         const DType* bottom_label,
+                                         const DType* dynamic_normalizer,
+                                         const int ignore_label) {
       CUDA_KERNEL_LOOP(index, count) {
-      const int k = static_cast<int>(out_label[index]);
-	  if(k == ignore_label)
-		in_grad[index] = DType(0.0f);
-	  else
-		in_grad[index] = out_data[index] - out_label[index];
+        out_data[index] = DType(DType(1.0f) / (DType(1.0f) + expf(-bottom_data[index])));
+        // printf("data is %.3f\n", bottom_data[index]);
+        const int target_value = static_cast<int>(bottom_label[index]);
+        if (ignore_label == target_value) {
+          loss_data[index] = 0.0f;
+        } else {
+          const DType loss_val = bottom_data[index] * (bottom_label[index] - (bottom_data[index] >= 0)) - 
+                                 log(1 + exp(bottom_data[index] - 2 * bottom_data[index] * (bottom_data[index] >= 0)));
+          // printf("data is %.3f, label is %.3f, loss is %.3f\n", bottom_data[index], bottom_label[index], loss_val);
+          loss_data[index] = -1 * loss_val / dynamic_normalizer[0];
+        }
+      }
+    }
+
+  template<typename DType>
+    __global__ void SigmoidBackwardKernel(const int count,
+                                          const DType* out_data,
+                                  	      const DType* out_label,
+                                          DType* in_grad,
+                                  	      DType ignore_label) {
+      CUDA_KERNEL_LOOP(index, count) {
+        const int k = static_cast<int>(out_label[index]);
+  	    if(k == ignore_label)
+  		    in_grad[index] = DType(0.0f);
+  	    else
+  		    in_grad[index] = out_data[index] - out_label[index];
       }
     }
 		
@@ -107,8 +130,28 @@ namespace mshadow {
 
   template<typename DType>
   inline void SigmoidForward(const Tensor<gpu, 2, DType> &out,
-      const Tensor<gpu, 2, DType> &data) {
+                             const Tensor<gpu, 2, DType> &data) {
     cuda::SigmoidForward(out, data);
+  }
+
+  template <typename DType>
+  inline void SigmoidForward(const Tensor<gpu, 2, DType> &out,
+                             const Tensor<gpu, 2, DType> &loss,
+                             const Tensor<gpu, 2, DType> &data,
+                             const Tensor<gpu, 2, DType> &label,
+                             const Tensor<gpu, 1, DType> &dynamic_normalizer,
+                             const int &ignore_label) {
+    DType* out_data = out.dptr_;
+    DType* loss_data = loss.dptr_;
+    const DType* bottom_data = data.dptr_;
+    const DType* bottom_label = label.dptr_;
+    const DType* dy_norm = dynamic_normalizer.dptr_;
+    const int count = out.shape_.Size();
+    cudaStream_t stream = Stream<gpu>::GetStream(out.stream_);
+    cuda::SigmoidForwardKernel<DType> << <mxnet::op::mxnet_op::cuda_get_num_blocks(count),
+      cuda::kBaseThreadNum, 0, stream >> >(count, out_data, loss_data, bottom_data, bottom_label, 
+        dy_norm, ignore_label);
+    SigmoidOutput_CUDA_CHECK(cudaPeekAtLastError());
   }
   
   template<typename DType>

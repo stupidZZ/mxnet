@@ -34,32 +34,35 @@ DEBUG = 0
 USE_PROFILER =
 
 # the additional link flags you want to add
-ADD_LDFLAGS =
+#ADD_LDFLAGS = -L/usr/local/cudnn-8.0_v6.0/lib64
 
 # the additional compile flags you want to add
-ADD_CFLAGS =
+#ADD_CFLAGS = -I/usr/local/cudnn-8.0_v6.0/include
 
 #---------------------------------------------
 # matrix computation libraries for CPU/GPU
 #---------------------------------------------
 
 # whether use CUDA during compile
-USE_CUDA = 0
+USE_CUDA = 1
 
 # add the path to CUDA library to link and compile flag
 # if you have already add them to environment variable, leave it as NONE
-# USE_CUDA_PATH = /usr/local/cuda
-USE_CUDA_PATH = NONE
+USE_CUDA_PATH = /usr/local/cuda
+#USE_CUDA_PATH = NONE
 
 # whether use CuDNN R3 library
-USE_CUDNN = 0
+USE_CUDNN = 1
 
 # CUDA architecture setting: going with all of them.
 # For CUDA < 6.0, comment the *_50 lines for compatibility.
 CUDA_ARCH := -gencode arch=compute_30,code=sm_30 \
 		-gencode arch=compute_35,code=sm_35 \
 		-gencode arch=compute_50,code=sm_50 \
-		-gencode arch=compute_50,code=compute_50
+		-gencode arch=compute_50,code=compute_50 \
+		-gencode arch=compute_60,code=compute_60 \
+		-gencode arch=compute_61,code=compute_61 \
+		-gencode arch=compute_62,code=compute_62 \
 
 # whether use cuda runtime compiling for writing kernels in native language (i.e. Python)
 USE_NVRTC = 0
