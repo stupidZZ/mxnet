@@ -54,20 +54,74 @@ namespace mshadow {
                                          const int ignore_label) {
       CUDA_KERNEL_LOOP(index, count) {
         out_data[index] = DType(DType(1.0f) / (DType(1.0f) + expf(-bottom_data[index])));
-        // printf("data is %.3f\n", bottom_data[index]);
         const int target_value = static_cast<int>(bottom_label[index]);
         if (ignore_label == target_value) {
           loss_data[index] = 0.0f;
         } else {
           const DType loss_val = bottom_data[index] * (bottom_label[index] - (bottom_data[index] >= 0)) - 
                                  log(1 + exp(bottom_data[index] - 2 * bottom_data[index] * (bottom_data[index] >= 0)));
-          // printf("data is %.3f, label is %.3f, loss is %.3f\n", bottom_data[index], bottom_label[index], loss_val);
           loss_data[index] = -1 * loss_val / dynamic_normalizer[0];
         }
       }
     }
 
-  template<typename DType>
+    /* 
+     * sigmoid forward with focal loss support
+     */
+    template<typename DType>
+    __global__ void SigmoidForwardKernel(const int count,
+                                         DType* out_data,
+                                         DType* loss_data,
+                                         const DType* bottom_data,
+                                         const DType* bottom_label,
+                                         const DType* dynamic_normalizer,
+                                         const float alpha,
+                                         const float gamma,
+                                         const int ignore_label) {
+      CUDA_KERNEL_LOOP(index, count) {
+        // out data remains the same under focal loss setting
+        out_data[index] = DType(DType(1.0f) / (DType(1.0f) + expf(-bottom_data[index])));
+        const int target_value = static_cast<int>(bottom_label[index]);
+        if (ignore_label == target_value) {
+          loss_data[index] = 0.0f;
+        } else {
+          const DType p = DType(DType(1.0f) / (DType(1.0f) + expf(-bottom_data[index])));
+          const DType pt = target_value == 0 ? 1.0f - p : p;
+          const DType alpha_t = target_value == 0 ? 1.0f - alpha : alpha;
+          const DType loss_val = alpha_t * pow(1 - pt, gamma) * log(pt);
+          loss_data[index] = -1 * loss_val / dynamic_normalizer[0];
+        }
+      }
+    }
+
+    /*
+     * sigmoid backward kernel with focal loss support
+     * note the gradient normalization doesn't happen in backward
+     */
+    template<typename DType>
+    __global__ void SigmoidBackwardKernel(const int count,
+                                          const DType* out_data,
+                                          const DType* out_label,
+                                          DType* in_grad,
+                                          const float alpha,
+                                          const float gamma,
+                                          const int ignore_label) {
+      CUDA_KERNEL_LOOP(index, count) {
+        const int target_label = static_cast<int>(out_label[index]);
+        if (ignore_label == target_label) {
+          in_grad[index] = static_cast<DType>(0.0f);
+        } else {
+          const DType p = out_data[index];
+          const DType pt = target_label == 0 ? 1.0f - p : p;
+          const DType alpha_t = target_label == 0 ? 1.0f - alpha : alpha;
+          const DType label_scalar = target_label == 0 ? -1.0f : 1.0f;
+          in_grad[index] = label_scalar * alpha_t * pow(1.0f - pt, gamma) * (gamma * pt * log(pt) + pt - 1);
+        }
+      }
+    }
+
+
+    template<typename DType>
     __global__ void SigmoidBackwardKernel(const int count,
                                           const DType* out_data,
                                   	      const DType* out_label,
@@ -82,7 +136,7 @@ namespace mshadow {
       }
     }
 		
-  template<typename DType>
+    template<typename DType>
     inline void SigmoidBackward(Tensor<gpu, 3, DType> &grad,
       const Tensor<gpu, 3, DType> &out,
       const Tensor<gpu, 2, DType> &label,
@@ -90,7 +144,7 @@ namespace mshadow {
       // LOG(INFO) << "SigmoidBackward";
       const DType *out_data = out.dptr_;
       const DType *out_label = label.dptr_;
-	  DType *in_grad = grad.dptr_;
+	    DType *in_grad = grad.dptr_;
       const int count = out.shape_.Size();
       cudaStream_t stream = Stream<gpu>::GetStream(out.stream_);
       SigmoidBackwardKernel<DType> << <mxnet::op::mxnet_op::cuda_get_num_blocks(count),
@@ -99,14 +153,14 @@ namespace mshadow {
       SigmoidOutput_CUDA_CHECK(cudaPeekAtLastError());
     }
 	
-  template<typename DType>
-	__global__ void SigmoidBackwardKernel(
+    template<typename DType>
+	  __global__ void SigmoidBackwardKernel(
       const int count,
       const DType* out_data,
-	  const DType* out_label,
+	    const DType* out_label,
       DType* in_grad) {
       CUDA_KERNEL_LOOP(index, count) {
-		in_grad[index] = out_data[index] - out_label[index];
+		    in_grad[index] = out_data[index] - out_label[index];
       }
     }
 		
@@ -117,7 +171,7 @@ namespace mshadow {
       // LOG(INFO) << "SigmoidBackward";
       const DType *out_data = out.dptr_;
       const DType *out_label = label.dptr_;
-	  DType *in_grad = grad.dptr_;
+	    DType *in_grad = grad.dptr_;
       const int count = out.shape_.Size();
       cudaStream_t stream = Stream<gpu>::GetStream(out.stream_);
       SigmoidBackwardKernel<DType> << <mxnet::op::mxnet_op::cuda_get_num_blocks(count),
@@ -153,6 +207,31 @@ namespace mshadow {
         dy_norm, ignore_label);
     SigmoidOutput_CUDA_CHECK(cudaPeekAtLastError());
   }
+
+  /*
+   * wrapper for cuda kernel: sigmoid forward with focal loss support
+   */
+  template <typename DType>
+  inline void SigmoidForward(const Tensor<gpu, 2, DType> &out,
+                             const Tensor<gpu, 2, DType> &loss,
+                             const Tensor<gpu, 2, DType> &data,
+                             const Tensor<gpu, 2, DType> &label,
+                             const Tensor<gpu, 1, DType> &dynamic_normalizer,
+                             const float alpha,
+                             const float gamma,
+                             const int &ignore_label) {
+    DType* out_data = out.dptr_;
+    DType* loss_data = loss.dptr_;
+    const DType* bottom_data = data.dptr_;
+    const DType* bottom_label = label.dptr_;
+    const DType* dy_norm = dynamic_normalizer.dptr_;
+    const int count = out.shape_.Size();
+    cudaStream_t stream = Stream<gpu>::GetStream(out.stream_);
+    cuda::SigmoidForwardKernel<DType> << <mxnet::op::mxnet_op::cuda_get_num_blocks(count),
+      cuda::kBaseThreadNum, 0, stream >> >(count, out_data, loss_data, bottom_data, bottom_label, 
+        dy_norm, alpha, gamma, ignore_label);
+    SigmoidOutput_CUDA_CHECK(cudaPeekAtLastError());
+  }
   
   template<typename DType>
   inline void SigmoidBackward(Tensor<gpu, 3, DType> &grad,
@@ -167,6 +246,23 @@ namespace mshadow {
       const Tensor<gpu, 3, DType> &out,
       const Tensor<gpu, 2, DType> &label) {
     cuda::SigmoidBackward(grad, out, label);
+  }
+
+  template <typename DType>
+  inline void SigmoidBackward(const Tensor<gpu, 3, DType> &grad,
+                              const Tensor<gpu, 3, DType> &out,
+                              const Tensor<gpu, 2, DType> &label,
+                              const float alpha,
+                              const float gamma,
+                              const int &ignore_label) {
+    const DType* out_data = out.dptr_;
+    const DType* out_label = label.dptr_;
+    DType *in_grad = grad.dptr_;
+    const int count = out.shape_.Size();
+    cudaStream_t stream = Stream<gpu>::GetStream(out.stream_);
+    cuda::SigmoidBackwardKernel<DType> << <mxnet::op::mxnet_op::cuda_get_num_blocks(count),
+      cuda::kBaseThreadNum, 0, stream >> >(count, out_data, out_label, in_grad, alpha, gamma, ignore_label);
+    SigmoidOutput_CUDA_CHECK(cudaPeekAtLastError());
   }
 
 }  // namespace mshadow

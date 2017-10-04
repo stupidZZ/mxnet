@@ -29,6 +29,9 @@ struct SigmoidOutputParam : public dmlc::Parameter<SigmoidOutputParam> {
   int normalization;
   bool out_grad;
   bool output_loss;
+  bool with_focal_param;
+  float alpha;
+  float gamma;
   DMLC_DECLARE_PARAMETER(SigmoidOutputParam) {
     DMLC_DECLARE_FIELD(grad_scale).set_default(1.0f)
     .describe("Scale the gradient by a float factor");
@@ -52,6 +55,12 @@ struct SigmoidOutputParam : public dmlc::Parameter<SigmoidOutputParam> {
     DMLC_DECLARE_FIELD(output_loss)
     .set_default(false)
     .describe("Whether output the cross-entropy loss");
+    DMLC_DECLARE_FIELD(with_focal_param).set_default(false)
+    .describe("whether use focal loss parameter to adjust loss");
+    DMLC_DECLARE_FIELD(alpha).set_default(0.5)
+    .describe("alpha value in focal loss");
+    DMLC_DECLARE_FIELD(gamma).set_default(0.0)
+    .describe("gamma value in focal loss");
   };
 };
 
@@ -78,7 +87,11 @@ class SigmoidOutputOp : public Operator {
       Tensor<xpu, 2, DType> loss = out_data[sigmoidout_enum::kLoss].get_with_shape<xpu, 2, DType>(s2, s);
       Tensor<xpu, 2, DType> label = in_data[sigmoidout_enum::kLabel].get_with_shape<xpu, 2, DType>(s2, s);
       Tensor<xpu, 1, DType> count = in_data[sigmoidout_enum::kCount].get<xpu, 1, DType>(s);
-      SigmoidForward(out, loss, data, label, count, static_cast<int>(param_.ignore_label));
+      if (param_.with_focal_param) {
+        SigmoidForward(out, loss, data, label, count, param_.alpha, param_.gamma, static_cast<int>(param_.ignore_label));
+      } else {
+        SigmoidForward(out, loss, data, label, count, static_cast<int>(param_.ignore_label));
+      }
     } else {
       SigmoidForward(out, data);
     }
@@ -108,7 +121,11 @@ class SigmoidOutputOp : public Operator {
     Tensor<xpu, 3, DType> grad = in_grad[sigmoidout_enum::kData].get_with_shape<xpu, 3, DType>(s3, s);
 
     if (param_.use_ignore) {
-      SigmoidBackward(grad, out, label, static_cast<DType>(param_.ignore_label));
+      if (param_.with_focal_param) {
+        SigmoidBackward(grad, out, label, param_.alpha, param_.gamma, static_cast<int>(param_.ignore_label));
+      } else {
+        SigmoidBackward(grad, out, label, static_cast<DType>(param_.ignore_label));
+      }
     } else {
       SigmoidBackward(grad, out, label);
     }

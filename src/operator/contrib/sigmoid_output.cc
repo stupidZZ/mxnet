@@ -29,6 +29,19 @@ namespace mshadow {
     // NOT_IMPLEMENTED;
     return;
   }
+
+  template<typename DType>
+  inline void SigmoidForward(const Tensor<cpu, 2, DType> &out,
+                             const Tensor<cpu, 2, DType> &loss,
+                             const Tensor<cpu, 2, DType> &data,
+                             const Tensor<cpu, 2, DType> &label,
+                             const Tensor<cpu, 1, DType> &dynamic_normalizer,
+                             const float alpha,
+                             const float gamma,
+                             const int &ignore_label) {
+    // NOT_IMPLEMENTED;
+    return;
+  }
   
   template<typename DType>
   inline void SigmoidBackward(Tensor<cpu, 3, DType> &grad,
@@ -46,6 +59,18 @@ namespace mshadow {
     // NOT_IMPLEMENTED;
     return;
   }
+
+  template<typename DType>
+  inline void SigmoidBackward(Tensor<cpu, 3, DType> &grad,
+      const Tensor<cpu, 3, DType> &out,
+      const Tensor<cpu, 2, DType> &label,
+      const float alpha,
+      const float gamma,
+      const int &ignore_label) {
+    // NOT_IMPLEMENTED;
+    return;
+  }
+
 }  // namespace mshadow
 
 namespace mxnet {
