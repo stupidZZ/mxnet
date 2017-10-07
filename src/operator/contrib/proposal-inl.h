@@ -147,6 +147,7 @@ struct ProposalParam : public dmlc::Parameter<ProposalParam> {
   int feature_stride;
   bool output_score;
   bool iou_loss;
+  bool skip_nms;
   DMLC_DECLARE_PARAMETER(ProposalParam) {
     float tmp[] = {0, 0, 0, 0};
     DMLC_DECLARE_FIELD(rpn_pre_nms_top_n).set_default(6000)
@@ -171,6 +172,8 @@ struct ProposalParam : public dmlc::Parameter<ProposalParam> {
     .describe("Add score to outputs");
     DMLC_DECLARE_FIELD(iou_loss).set_default(false)
     .describe("Usage of IoU Loss");
+    DMLC_DECLARE_FIELD(skip_nms).set_default(false)
+    .describe("Skip Nms or not");
   }
 };
 

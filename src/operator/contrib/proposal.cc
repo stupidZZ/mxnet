@@ -390,15 +390,22 @@ class ProposalOp : public Operator{
     Tensor<cpu, 1> suppressed = workspace_nms[1];
     Tensor<cpu, 1> keep = workspace_nms[2];
     suppressed = 0;  // surprised!
-
-    utils::NonMaximumSuppression(workspace_ordered_proposals,
-                                 param_.threshold,
-                                 rpn_post_nms_top_n,
-                                 &area,
-                                 &suppressed,
-                                 &keep,
-                                 &out_size);
-
+    
+    if (!param_.skip_nms) {
+      utils::NonMaximumSuppression(workspace_ordered_proposals,
+                                   param_.threshold,
+                                   rpn_post_nms_top_n,
+                                   &area,
+                                   &suppressed,
+                                   &keep,
+                                   &out_size);
+    } else {
+      for (index_t i = 0; i < workspace_ordered_proposals.size(0) && i < rpn_post_nms_top_n; ++i) {
+          keep[i] = i;
+		  out_size++;
+      }
+    }
+    
     // fill in output rois
     for (index_t i = 0; i < out.size(0); ++i) {
       // batch index 0

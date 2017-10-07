@@ -540,11 +540,18 @@ class ProposalGPUOp : public Operator{
     // perform nms
     std::vector<int> _keep(workspace_ordered_proposals.size(0));
     int out_size = 0;
-    _nms(workspace_ordered_proposals,
-         param_.threshold,
-         &_keep[0],
-         &out_size);
-
+    if (!param_.skip_nms) {
+      _nms(workspace_ordered_proposals,
+           param_.threshold,
+           &_keep[0],
+           &out_size);
+    } else {
+      for (int i = 0; i < workspace_ordered_proposals.size(0); i++) {
+        _keep[i] = i;
+		out_size++;
+      }  
+    }
+    
     // copy nms result to gpu
     int* keep;
     FRCNN_CUDA_CHECK(cudaMalloc(&keep, sizeof(int) * _keep.size()));
