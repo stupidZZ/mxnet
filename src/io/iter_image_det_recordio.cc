@@ -149,6 +149,8 @@ struct ImageDetRecParserParam : public dmlc::Parameter<ImageDetRecParserParam> {
   int label_pad_width;
   /*! \brief labe padding value */
   float label_pad_value;
+  /*! \brief scale the data if neede */
+  float data_scale;
 
   // declare parameters
   DMLC_DECLARE_PARAMETER(ImageDetRecParserParam) {
@@ -183,6 +185,8 @@ struct ImageDetRecParserParam : public dmlc::Parameter<ImageDetRecParserParam> {
         .describe("pad output label width if set larger than 0, -1 for auto estimate");
     DMLC_DECLARE_FIELD(label_pad_value).set_default(-1.f)
         .describe("label padding value if enabled");
+    DMLC_DECLARE_FIELD(data_scale).set_default(1.f)
+        .describe("scale the value of data");
   }
 };
 
@@ -392,6 +396,9 @@ ParseNext(std::vector<InstVector<DType>> *out_vec) {
        default:
         LOG(FATAL) << "Invalid output shape " << param_.data_shape;
       }
+      int ori_height = res.rows;
+      int ori_width = res.cols;
+
       const int n_channels = res.channels();
       // load label before augmentations
       std::vector<float> label_buf;
@@ -427,7 +434,7 @@ ParseNext(std::vector<InstVector<DType>> *out_vec) {
         uchar* im_data = res.ptr<uchar>(i);
         for (int j = 0; j < res.cols; ++j) {
           for (int k = 0; k < n_channels; ++k) {
-              data[k][i][j] = im_data[swap_indices[k]];
+              data[k][i][j] = im_data[swap_indices[k]] * param_.data_scale;
           }
           im_data += n_channels;
         }
@@ -436,8 +443,8 @@ ParseNext(std::vector<InstVector<DType>> *out_vec) {
       label = param_.label_pad_value;
       // store info for real data_shape and label_width
       label[0] = res.channels();
-      label[1] = res.rows;
-      label[2] = res.cols;
+      label[1] = ori_height;
+      label[2] = ori_width;
       label[3] = label_buf.size();
       mshadow::Copy(label.Slice(4, 4 + label_buf.size()),
         mshadow::Tensor<cpu, 1>(dmlc::BeginPtr(label_buf),

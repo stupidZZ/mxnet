@@ -19,7 +19,7 @@ using nnvm::Tuple;
 
 namespace image_det_aug_default_enum {
 enum ImageDetAugDefaultCropEmitMode {kCenter, kOverlap};
-enum ImageDetAugDefaultResizeMode {kForce, kShrink, kFit};
+enum ImageDetAugDefaultResizeMode {kForce, kShrink, kFit, kForceFit};
 }
 
 /*! \brief image detection augmentation parameters*/
@@ -169,11 +169,13 @@ struct DefaultImageDetAugmentParam : public dmlc::Parameter<DefaultImageDetAugme
       .add_enum("force", image_det_aug_default_enum::kForce)
       .add_enum("shrink", image_det_aug_default_enum::kShrink)
       .add_enum("fit", image_det_aug_default_enum::kFit)
+      .add_enum("forcefit", image_det_aug_default_enum::kForceFit)
       .set_default(image_det_aug_default_enum::kForce)
       .describe("Augmentation Param: How image data fit in data_shape. "
                 "force: force reshape to data_shape regardless of aspect ratio; "
                 "shrink: ensure each side fit in data_shape, preserve aspect ratio; "
-                "fit: fit image to data_shape, preserve ratio, will upscale if applicable.");
+                "fit: fit image to data_shape, preserve ratio, will upscale if applicable."
+                "forcefit: fit image to data_shape, preserve ratio, will fill border with fill_value if the shape is smaller than data_shape.");
   }
 };
 
@@ -644,6 +646,35 @@ class DefaultImageDetAugmenter : public ImageAugmenter {
                    res.cols, res.rows, new_width, new_height, prnd);
       cv::resize(res, res, cv::Size(new_width, new_height),
                   0, 0, interpolation_method);
+    } else if (image_det_aug_default_enum::kForceFit == param_.resize_mode) {
+      float h = param_.data_shape[1];
+      float w = param_.data_shape[2];
+      
+      int new_width = w;
+      int new_height = h;
+      if (((float)w/res.cols) < ((float)h/res.rows)) {
+        new_width = w;
+        new_height = (res.rows * w)/res.cols;
+      } else {
+        new_height = h;
+        new_width = (res.cols * h)/res.rows;
+      }
+      int interpolation_method = GetInterMethod(param_.inter_method,
+                   res.cols, res.rows, new_width, new_height, prnd);
+      cv::resize(res, res, cv::Size(new_width, new_height),
+                  0, 0, interpolation_method);
+
+      temp_ = res;
+
+      int left = static_cast<int>(((int)w-new_width)/2);
+      int top = static_cast<int>(((int)h-new_height)/2);
+      int right = static_cast<int>(((int)w-new_width) - ((int)w-new_width)/2);
+      int bot = static_cast<int>(((int)h-new_height) - ((int)h-new_height)/2);
+      cv::copyMakeBorder(temp_, res, top, bot, left, right, cv::BORDER_ISOLATED,
+            cv::Scalar(param_.fill_value, param_.fill_value, param_.fill_value));
+      
+      Rect pad_box(-(float)left / w, -top / w, w / new_width, h / new_height);
+      det_label.TryPad(pad_box);
     }
 
     *label = det_label.ToArray();  // put back processed labels
