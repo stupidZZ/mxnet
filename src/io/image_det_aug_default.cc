@@ -673,7 +673,7 @@ class DefaultImageDetAugmenter : public ImageAugmenter {
       cv::copyMakeBorder(temp_, res, top, bot, left, right, cv::BORDER_ISOLATED,
             cv::Scalar(param_.fill_value, param_.fill_value, param_.fill_value));
       
-      Rect pad_box(-(float)left / w, -top / w, w / new_width, h / new_height);
+      Rect pad_box(-(float)left / new_width, -(float)top / new_height, w / new_width, h / new_height);
       det_label.TryPad(pad_box);
     }
 
