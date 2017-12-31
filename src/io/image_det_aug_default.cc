@@ -258,8 +258,9 @@ class ImageDetLabel {
       obj.bottom = *(it++);
       obj.extra.assign(it, it - 5 + object_width_);
       objects_.push_back(obj);
-      CHECK_GT(obj.right, obj.left);
-      CHECK_GT(obj.bottom, obj.top);
+      if (obj.right > obj.left && obj.bottom > obj.top) {
+        objects_.push_back(obj);
+      }
     }
   }
 
