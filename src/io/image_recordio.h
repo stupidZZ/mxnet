@@ -10,6 +10,7 @@
 #include <dmlc/io.h>
 #include <string>
 
+#define MXNET_IO_IMAGE_RECORDIO_H_DEBUG_FLAG 0
 namespace mxnet {
 namespace io {
 /*! \brief image recordio struct */
@@ -62,11 +63,16 @@ struct ImageRecordIO {
    * \param buf the head of record
    * \param size the size of the entire record   
    */
-  inline void Load(void *buf, size_t size) {
+  inline void Load(void *buf, size_t size, int tid=-1, int iter_cnt_for_debug=-1) {
     CHECK(size >= sizeof(header));
     std::memcpy(&header, buf, sizeof(header));
     content = reinterpret_cast<uint8_t*>(buf) + sizeof(header);
     content_size = size - sizeof(header);
+    
+    if(MXNET_IO_IMAGE_RECORDIO_H_DEBUG_FLAG) {
+        printf("content_size:%d header.flag:%d\n", content_size, header.flag); 
+    }
+    
     if (header.flag > 0) {
       CHECK(content_size >= sizeof(float)*header.flag);
       label = reinterpret_cast<float*>(content);

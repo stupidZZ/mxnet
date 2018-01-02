@@ -16,6 +16,9 @@
 #include <unordered_map>
 #include <vector>
 #include <cstdlib>
+#include <stdlib.h>
+#include <iostream>
+#include <typeinfo>
 #include "./inst_vector.h"
 #include "./image_recordio.h"
 #include "./image_augmenter.h"
@@ -23,6 +26,8 @@
 #include "./iter_prefetcher.h"
 #include "./iter_normalize.h"
 #include "./iter_batchloader.h"
+
+#define DEBUG_FLAG 0
 
 namespace mxnet {
 namespace io {
@@ -254,6 +259,9 @@ inline void ImageDetRecordIOParser<DType>::Init(
       augmenters_[i].back()->Init(kwargs);
     }
     prnds_.emplace_back(new common::RANDOM_ENGINE((i + 1) * kRandMagic));
+    //srand((unsigned)time(NULL));
+    //int rand_seed = rand()%255;
+    //prnds_.emplace_back(new common::RANDOM_ENGINE((i + 1) * rand_seed));
   }
   if (param_.path_imglist.length() != 0) {
     label_map_.reset(new ImageDetLabelMap(param_.path_imglist.c_str(),
@@ -280,6 +288,7 @@ inline void ImageDetRecordIOParser<DType>::Init(
     while (source_->NextChunk(&chunk)) {
       #pragma omp parallel num_threads(param_.preprocess_threads)
       {
+        int iter_cnt_for_debug = 0;
         CHECK(omp_get_num_threads() == param_.preprocess_threads);
         int max_width = 0;
         int tid = omp_get_thread_num();
@@ -287,7 +296,13 @@ inline void ImageDetRecordIOParser<DType>::Init(
         ImageRecordIO rec;
         dmlc::InputSplit::Blob blob;
         while (reader.NextRecord(&blob)) {
-          rec.Load(blob.dptr, blob.size);
+          iter_cnt_for_debug++;
+          if(DEBUG_FLAG) {  
+            rec.Load(blob.dptr, blob.size, tid, iter_cnt_for_debug);
+          }
+          else {
+            rec.Load(blob.dptr, blob.size);
+          }
           if (rec.label != NULL) {
             if (param_.label_width > 0) {
               CHECK_EQ(param_.label_width, rec.num_label)
@@ -403,8 +418,15 @@ ParseNext(std::vector<InstVector<DType>> *out_vec) {
       // load label before augmentations
       std::vector<float> label_buf;
       if (this->label_map_ != nullptr) {
+        if (DEBUG_FLAG) {
+            printf("rec.image_index():%d come to branch A\n", rec.image_index());
+        }
+            
         label_buf = label_map_->FindCopy(rec.image_index());
       } else if (rec.label != NULL) {
+        if (DEBUG_FLAG) {
+            printf("rec.image_index():%d come to branch B\n", rec.image_index());
+        }
         if (param_.label_width > 0) {
           CHECK_EQ(param_.label_width, rec.num_label)
             << "rec file provide " << rec.num_label << "-dimensional label "
@@ -414,8 +436,15 @@ ParseNext(std::vector<InstVector<DType>> *out_vec) {
       } else {
         LOG(FATAL) << "Not enough label packed in img_list or rec file.";
       }
-      for (auto& aug : this->augmenters_[tid]) {
-        res = aug->Process(res, &label_buf, this->prnds_[tid].get());
+      
+      try {
+        for (auto& aug : this->augmenters_[tid]) {
+            res = aug->Process(res, &label_buf, this->prnds_[tid].get());
+        }
+      }
+      catch (...) {
+        printf("rec.image_index():%d\n", rec.image_index());
+        throw;
       }
       out.Push(static_cast<unsigned>(rec.image_index()),
                mshadow::Shape3(n_channels, param_.data_shape[1], param_.data_shape[2]),
@@ -429,12 +458,22 @@ ParseNext(std::vector<InstVector<DType>> *out_vec) {
       if (n_channels == 1) swap_indices = {0};
       if (n_channels == 3) swap_indices = {2, 1, 0};
       if (n_channels == 4) swap_indices = {2, 1, 0, 3};
-
+      
+      if(DEBUG_FLAG) {
+          std::cout << "type info of data:"<< typeid(data[0][0][0]).name()<< std::endl;
+          std::cout << "param_.data_scale:" << param_.data_scale<<std::endl;
+      }
+      
       for (int i = 0; i < res.rows; ++i) {
         uchar* im_data = res.ptr<uchar>(i);
         for (int j = 0; j < res.cols; ++j) {
           for (int k = 0; k < n_channels; ++k) {
-              data[k][i][j] = im_data[swap_indices[k]] * param_.data_scale;
+              data[k][i][j] = (DType)((float)(im_data[swap_indices[k]]) * param_.data_scale);
+              if(DEBUG_FLAG) {
+                if(i == 0 && j == 0) {
+                    std::cout << "data[0][0][" << k << "]:" << data[k][i][j] << std::endl;
+                }
+              }
           }
           im_data += n_channels;
         }

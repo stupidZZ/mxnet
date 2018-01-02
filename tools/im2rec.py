@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 from __future__ import print_function
+import cv2
 import os
 import sys
 
@@ -8,7 +9,6 @@ sys.path.append(os.path.join(curr_path, "../python"))
 import mxnet as mx
 import random
 import argparse
-import cv2
 import time
 import traceback
 
