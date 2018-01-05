@@ -437,9 +437,18 @@ ParseNext(std::vector<InstVector<DType>> *out_vec) {
         LOG(FATAL) << "Not enough label packed in img_list or rec file.";
       }
       
+      int rand_scale_idx = -1;
       try {
         for (auto& aug : this->augmenters_[tid]) {
-            res = aug->Process(res, &label_buf, this->prnds_[tid].get());
+            bool implemented = false;
+            res = aug->Process(res, &label_buf, rand_scale_idx, this->prnds_[tid].get(), implemented);
+            if(implemented == false) {
+                res = aug->Process(res, &label_buf, this->prnds_[tid].get());
+            }
+            
+            if(DEBUG_FLAG) {
+                printf("implemented:%d\n", implemented);
+            }
         }
       }
       catch (...) {
@@ -448,7 +457,7 @@ ParseNext(std::vector<InstVector<DType>> *out_vec) {
       }
       out.Push(static_cast<unsigned>(rec.image_index()),
                mshadow::Shape3(n_channels, param_.data_shape[1], param_.data_shape[2]),
-               mshadow::Shape1(param_.label_pad_width + 4));
+               mshadow::Shape1(param_.label_pad_width + 5));
 
       mshadow::Tensor<cpu, 3, DType> data = out.data().Back();
 
@@ -485,7 +494,8 @@ ParseNext(std::vector<InstVector<DType>> *out_vec) {
       label[1] = ori_height;
       label[2] = ori_width;
       label[3] = label_buf.size();
-      mshadow::Copy(label.Slice(4, 4 + label_buf.size()),
+      label[4] = rand_scale_idx;
+      mshadow::Copy(label.Slice(5, 5 + label_buf.size()),
         mshadow::Tensor<cpu, 1>(dmlc::BeginPtr(label_buf),
         mshadow::Shape1(label_buf.size())));
       res.release();

@@ -40,6 +40,12 @@ class ImageAugmenter {
    */
   virtual cv::Mat Process(const cv::Mat &src, std::vector<float> *label,
                           common::RANDOM_ENGINE *prnd) = 0;
+                          
+  virtual cv::Mat Process(const cv::Mat &src, std::vector<float> *label, int& rand_scale_idx,
+                          common::RANDOM_ENGINE *prnd, bool &implemented) {
+    implemented = false;
+    return src;
+  }
   // virtual destructor
   virtual ~ImageAugmenter() {}
   /*!
