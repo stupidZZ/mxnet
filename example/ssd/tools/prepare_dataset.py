@@ -6,6 +6,7 @@ curr_path = os.path.abspath(os.path.dirname(__file__))
 sys.path.append(os.path.join(curr_path, '..'))
 from dataset.coco import coco
 from dataset.pascal_voc import PascalVoc
+from dataset.dota import DOTA
 from dataset.concat_db import ConcatDB
 
 
@@ -82,6 +83,36 @@ def load_pascal(image_set, root_path, shuffle=False):
     else:
         return imdbs[0]
 
+def load_dota(image_set, root_path, shuffle=False):
+    """
+    wrapper function for loading pascal voc dataset
+
+    Parameters:
+    ----------
+    image_set : str
+        train, trainval...
+    year : str
+        2007, 2012 or combinations splitted by comma
+    devkit_path : str
+        root directory of dataset
+    shuffle : bool
+        whether to shuffle initial list
+
+    Returns:
+    ----------
+    Imdb
+    """
+    image_set = [y.strip() for y in image_set.split(',')]
+
+    assert image_set, "No image_set specified"
+
+    imdbs = []
+    for s in image_set:
+        imdbs.append(DOTA(s, root_path, shuffle, is_train=True))
+    if len(imdbs) > 1:
+        return ConcatDB(imdbs, shuffle)
+    else:
+        return imdbs[0]
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Prepare lists for dataset')
@@ -127,6 +158,9 @@ if __name__ == '__main__':
         db.save_imglist(args.target, root=args.root_path)
     elif args.dataset == 'coco':
         db = load_coco(args.set, args.root_path, args.shuffle)
+        db.save_imglist(args.target, root=args.root_path)
+    elif args.dataset == 'dota':
+        db = load_dota(args.set, args.root_path, args.shuffle)
         db.save_imglist(args.target, root=args.root_path)
     else:
         raise NotImplementedError("No implementation for dataset: " + args.dataset)
