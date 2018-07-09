@@ -67,10 +67,21 @@ struct ImageRecordIO {
   uint8_t *content;
   /*! \brief size of the content */
   size_t content_size;
+  /*! \brief the flag of deep copy */
+  bool deep_copy;
   /*! \brief constructor */
   ImageRecordIO(void)
-      : label(NULL), num_label(0), content(NULL), content_size(0) {
+      : label(NULL), num_label(0), content(NULL), content_size(0), deep_copy(false) {
     memset(&header, 0, sizeof(header));
+  }
+  ~ImageRecordIO() {
+    if(deep_copy) {
+        //std::cout << "~ImageRecordIO and deep_copy is True" << std::endl;
+        delete [] content;
+        if(label != NULL) {
+            delete [] label;
+        }
+    }
   }
   /*! \brief get image id from record */
   inline uint64_t image_index(void) const {
@@ -81,7 +92,30 @@ struct ImageRecordIO {
    * \param buf the head of record
    * \param size the size of the entire record
    */
+  inline void DeepLoad(void *buf, size_t size) {
+    CHECK(size >= sizeof(header));
+    std::memcpy(&header, buf, sizeof(header));
+    uint8_t* pData = reinterpret_cast<uint8_t*>(buf) + sizeof(header);
+    content_size = size - sizeof(header);
+    if (header.flag > 0) {
+      CHECK(content_size >= sizeof(float)*header.flag);
+      float* pLabel = reinterpret_cast<float*>(pData);
+      num_label = header.flag;
+      label = new float[num_label];
+      std::memcpy(label, pLabel, num_label);
+      pData = reinterpret_cast<uint8_t*>(pLabel + header.flag);
+      content_size -= sizeof(float)*header.flag;      
+    } else {
+      label = NULL;
+      num_label = 0;
+    }
+    content = new uint8_t[content_size];
+    std::memcpy(content, pData, content_size);
+    deep_copy = true;
+  }
+  
   inline void Load(void *buf, size_t size) {
+    CHECK(deep_copy == false);
     CHECK(size >= sizeof(header));
     std::memcpy(&header, buf, sizeof(header));
     content = reinterpret_cast<uint8_t*>(buf) + sizeof(header);

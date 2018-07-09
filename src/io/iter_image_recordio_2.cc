@@ -56,6 +56,7 @@ class ImageRecordIOParser2 {
   inline void BeforeFirst(void) {
     if (batch_param_.round_batch == 0 || !overflow) {
       n_parsed_ = 0;
+      cache_index = 0;                
       return source_->BeforeFirst();
     } else {
       overflow = false;
@@ -64,6 +65,7 @@ class ImageRecordIOParser2 {
   // parse next set of records, return an array of
   // instance vector to the user
   inline bool ParseNext(DataBatch *out);
+  inline bool ParseNextFromCache(DataBatch *out);                                             
 
  private:
 #if MXNET_USE_OPENCV
@@ -77,6 +79,8 @@ class ImageRecordIOParser2 {
 #endif
   inline unsigned ParseChunk(DType* data_dptr, real_t* label_dptr, const unsigned current_size,
     dmlc::InputSplit::Blob * chunk);
+  inline unsigned ParseFromCache(DType* data_dptr, real_t* label_dptr, const unsigned current_size);
+  inline void InitCache(void);  
   inline void CreateMeanImg(void);
 
   // magic number to seed prng
@@ -119,6 +123,10 @@ class ImageRecordIOParser2 {
   bool legacy_shuffle_;
   // whether mean image is ready.
   bool meanfile_ready_;
+  // cache
+  std::vector<std::shared_ptr<ImageRecordIO>> cache;
+  // cache_index
+  size_t cache_index;                
 };
 
 template<typename DType>
@@ -213,6 +221,10 @@ inline void ImageRecordIOParser2<DType>::Init(
       source_->HintChunkSize(64 << 20UL);
     }
   }
+  std::cout << "Begin InitCache" <<std::endl;
+  // Load all images to RAM
+  this->InitCache();
+  std::cout << "End InitCache" <<std::endl;
   // Normalize init
   if (!std::is_same<DType, uint8_t>::value) {
     meanimg_.set_pad(false);
@@ -253,6 +265,106 @@ inline void ImageRecordIOParser2<DType>::Init(
 #endif
 }
 
+template<typename DType>
+inline bool ImageRecordIOParser2<DType>::ParseNextFromCache(DataBatch *out) {
+  if (overflow) {
+    return false;
+  }
+  CHECK(cache.size() > 0);
+  unsigned current_size = 0;
+  out->index.resize(batch_param_.batch_size);
+
+  // InitBatch
+  if (out->data.size() == 0) {
+    // This assumes that DataInst given by
+    // InstVector contains only 2 elements in
+    // data vector (operator[] implementation)
+    out->data.resize(2);
+    unit_size_.resize(2);
+
+    std::vector<index_t> shape_vec;
+    shape_vec.push_back(batch_param_.batch_size);
+    for (index_t dim = 0; dim < param_.data_shape.ndim(); ++dim) {
+      shape_vec.push_back(param_.data_shape[dim]);
+    }
+    TShape data_shape(shape_vec.begin(), shape_vec.end());
+
+    shape_vec.clear();
+    shape_vec.push_back(batch_param_.batch_size);
+    shape_vec.push_back(param_.label_width);
+    TShape label_shape(shape_vec.begin(), shape_vec.end());
+
+    out->data.at(0) = NDArray(data_shape, Context::CPUPinned(0), false,
+      mshadow::DataType<DType>::kFlag);
+    out->data.at(1) = NDArray(label_shape, Context::CPUPinned(0), false,
+      mshadow::DataType<real_t>::kFlag);
+    unit_size_[0] = param_.data_shape.Size();
+    unit_size_[1] = param_.label_width;
+  }
+  
+  while (current_size < batch_param_.batch_size) {
+    // int n_to_copy;
+    unsigned n_to_out = 0;
+    if (n_parsed_ == 0) {
+      if (current_size < cache.size()) {
+      //if (source_->NextBatch(&chunk, batch_param_.batch_size)) {
+        inst_order_.clear();
+        inst_index_ = 0;
+        DType* data_dptr = static_cast<DType*>(out->data[0].data().dptr_);
+        real_t* label_dptr = static_cast<real_t*>(out->data[1].data().dptr_);
+        if (!legacy_shuffle_) {
+          n_to_out = ParseFromCache(data_dptr, label_dptr, current_size);
+        } else {
+          n_to_out = ParseFromCache(NULL, NULL, batch_param_.batch_size);
+        }
+        // Count number of parsed images that do not fit into current out
+        n_parsed_ = inst_order_.size();
+        // shuffle instance order if needed
+        if (legacy_shuffle_) {
+          std::shuffle(inst_order_.begin(), inst_order_.end(), rnd_);
+        }
+        //std::cout << "n_parsed_:"<<n_parsed_<<std::endl;
+      } else {
+        if (current_size == 0) {
+          return false;
+        }
+        CHECK(!overflow) << "number of input images must be bigger than the batch size";
+        if (batch_param_.round_batch != 0) {
+          overflow = true;
+          //source_->BeforeFirst();
+          cache_index = 0;
+        } else {
+          current_size = batch_param_.batch_size;
+        }
+        out->num_batch_padd = batch_param_.batch_size - current_size;
+        n_to_out = 0;
+      }
+    } else {
+      int n_to_copy = std::min(n_parsed_, batch_param_.batch_size - current_size);
+      n_parsed_ -= n_to_copy;
+      // Copy
+      #pragma omp parallel for num_threads(param_.preprocess_threads)
+      for (int i = 0; i < n_to_copy; ++i) {
+        std::pair<unsigned, unsigned> place = inst_order_[inst_index_ + i];
+        const DataInst& batch = temp_[place.first][place.second];
+        for (unsigned j = 0; j < batch.data.size(); ++j) {
+          CHECK_EQ(unit_size_[j], batch.data[j].Size());
+          MSHADOW_TYPE_SWITCH(out->data[j].data().type_flag_, dtype, {
+          mshadow::Copy(
+              out->data[j].data().FlatTo1D<cpu, dtype>().Slice((current_size + i) * unit_size_[j],
+                (current_size + i + 1) * unit_size_[j]),
+              batch.data[j].get_with_shape<cpu, 1, dtype>(mshadow::Shape1(unit_size_[j])));
+          });
+        }
+      }
+      n_to_out = n_to_copy;
+      inst_index_ += n_to_copy;
+    }
+
+    current_size += n_to_out;
+  }
+  return true;
+}
 template<typename DType>
 inline bool ImageRecordIOParser2<DType>::ParseNext(DataBatch *out) {
   if (overflow) {
@@ -475,6 +587,141 @@ cv::Mat ImageRecordIOParser2<DType>::TJimdecode(cv::Mat image, int color) {
 #endif
 #endif
 
+
+
+// Returns the number of images that are put into output
+template<typename DType>
+inline unsigned ImageRecordIOParser2<DType>::ParseFromCache(DType* data_dptr, real_t* label_dptr, const unsigned current_size) {
+  temp_.resize(param_.preprocess_threads);
+#if MXNET_USE_OPENCV
+  // save opencv out
+  unsigned gl_idx = current_size;
+  #pragma omp parallel num_threads(param_.preprocess_threads)
+  {
+    CHECK(omp_get_num_threads() == param_.preprocess_threads);
+    unsigned int tid = omp_get_thread_num();
+    // image data
+    std::shared_ptr<ImageRecordIO> pRec = NULL;
+    InstVector<DType> &out_tmp = temp_[tid];
+    out_tmp.Clear();
+    while (true) {
+      unsigned idx;
+      bool reach_max_buffered;
+      #pragma omp critical
+      {
+        reach_max_buffered = (gl_idx - current_size >= 200) || (cache_index >= cache.size());
+        if (!reach_max_buffered) {
+          idx = gl_idx++;
+          if (idx >= batch_param_.batch_size) {
+            inst_order_.push_back(std::make_pair(tid, out_tmp.Size()));
+          }
+          cache_index++;
+          pRec = cache[cache_index];
+        }
+      }
+      if(reach_max_buffered) 
+      {
+          break;
+      }
+      // Opencv decode and augments
+      
+      cv::Mat res;
+      cv::Mat buf(1, pRec->content_size, CV_8U, pRec->content);
+      switch (param_.data_shape[0]) {
+       case 1:
+#if MXNET_USE_LIBJPEG_TURBO
+        res = TJimdecode(buf, 0);
+#else
+        res = cv::imdecode(buf, 0);
+#endif
+        break;
+       case 3:
+#if MXNET_USE_LIBJPEG_TURBO
+        res = TJimdecode(buf, 1);
+#else
+        res = cv::imdecode(buf, 1);
+#endif
+        break;
+       case 4:
+        // -1 to keep the number of channel of the encoded image, and not force gray or color.
+        res = cv::imdecode(buf, -1);
+        CHECK_EQ(res.channels(), 4)
+          << "Invalid image with index " << pRec->image_index()
+          << ". Expected 4 channels, got " << res.channels();
+        break;
+       default:
+        LOG(FATAL) << "Invalid output shape " << param_.data_shape;
+      }
+      const int n_channels = res.channels();
+      for (auto& aug : augmenters_[tid]) {
+        res = aug->Process(res, nullptr, prnds_[tid].get());
+      }
+      mshadow::Tensor<cpu, 3, DType> data;
+      if (idx < batch_param_.batch_size) {
+        data = mshadow::Tensor<cpu, 3, DType>(data_dptr + idx*unit_size_[0],
+          mshadow::Shape3(n_channels, res.rows, res.cols));
+      } else {
+        out_tmp.Push(static_cast<unsigned>(pRec->image_index()),
+                 mshadow::Shape3(n_channels, res.rows, res.cols),
+                 mshadow::Shape1(param_.label_width));
+        data = out_tmp.data().Back();
+      }
+
+      std::uniform_real_distribution<float> rand_uniform(0, 1);
+      std::bernoulli_distribution coin_flip(0.5);
+      bool is_mirrored = (normalize_param_.rand_mirror && coin_flip(*(prnds_[tid])))
+                         || normalize_param_.mirror;
+      float contrast_scaled = 1;
+      float illumination_scaled = 0;
+      if (!std::is_same<DType, uint8_t>::value) {
+        contrast_scaled =
+          (rand_uniform(*(prnds_[tid])) * normalize_param_.max_random_contrast * 2
+          - normalize_param_.max_random_contrast + 1)*normalize_param_.scale;
+        illumination_scaled =
+          (rand_uniform(*(prnds_[tid])) * normalize_param_.max_random_illumination * 2
+          - normalize_param_.max_random_illumination) * normalize_param_.scale;
+      }
+      // For RGB or RGBA data, swap the B and R channel:
+      // OpenCV store as BGR (or BGRA) and we want RGB (or RGBA)
+      if (n_channels == 1) {
+        ProcessImage<1>(res, &data, is_mirrored, contrast_scaled, illumination_scaled);
+      } else if (n_channels == 3) {
+        ProcessImage<3>(res, &data, is_mirrored, contrast_scaled, illumination_scaled);
+      } else if (n_channels == 4) {
+        ProcessImage<4>(res, &data, is_mirrored, contrast_scaled, illumination_scaled);
+      }
+
+      mshadow::Tensor<cpu, 1, real_t> label;
+      if (idx < batch_param_.batch_size) {
+        label = mshadow::Tensor<cpu, 1, real_t>(label_dptr + idx*unit_size_[1],
+          mshadow::Shape1(param_.label_width));
+      } else {
+        label = out_tmp.label().Back();
+      }
+
+      if (label_map_ != nullptr) {
+        mshadow::Copy(label, label_map_->Find(pRec->image_index()));
+      } else if (pRec->label != NULL) {
+        CHECK_EQ(param_.label_width, pRec->num_label)
+          << "rec file provide " << pRec->num_label << "-dimensional label "
+             "but label_width is set to " << param_.label_width;
+        mshadow::Copy(label, mshadow::Tensor<cpu, 1>(pRec->label,
+                                                     mshadow::Shape1(pRec->num_label)));
+      } else {
+        CHECK_EQ(param_.label_width, 1)
+          << "label_width must be 1 unless an imglist is provided "
+             "or the rec file is packed with multi dimensional label";
+        label[0] = pRec->header.label;
+      }
+      res.release();
+    }
+  }
+  return (std::min(batch_param_.batch_size, gl_idx) - current_size);
+#else
+  LOG(FATAL) << "Opencv is needed for image decoding and augmenting.";
+  return 0;
+#endif
+}
 // Returns the number of images that are put into output
 template<typename DType>
 inline unsigned ImageRecordIOParser2<DType>::ParseChunk(DType* data_dptr, real_t* label_dptr,
@@ -608,6 +855,48 @@ inline unsigned ImageRecordIOParser2<DType>::ParseChunk(DType* data_dptr, real_t
 #endif
 }
 
+// init cache
+template<typename DType>
+inline void ImageRecordIOParser2<DType>::InitCache(void) {
+    double start = dmlc::GetTime();
+    dmlc::InputSplit::Blob chunk;
+    size_t imcnt = 0;  // NOLINT(*)
+    //std::cout << "Init Cache Enter loop" << std::endl;
+    while (source_->NextChunk(&chunk)) {
+      //std::cout << "Clear inst_order" << std::endl;
+      inst_order_.clear();
+      //std::cout << "Create reader" << std::endl;
+      dmlc::RecordIOChunkReader reader(chunk, 0, 1);
+      dmlc::InputSplit::Blob blob;
+      while(true) {
+        //std::cout << "reader.NextRecord" << std::endl;
+        bool reader_has_data = reader.NextRecord(&blob);
+        
+        // if cannot load data from current chunk, break;
+        if(!reader_has_data) {
+            //std::cout << "reader_has_data is False" << std::endl;
+            break;
+        }
+        
+        //std::cout << "create new rec" << std::endl;
+        std::shared_ptr<ImageRecordIO> pRec(new ImageRecordIO());
+        //std::cout << "load from blob" << std::endl;
+        pRec->DeepLoad(blob.dptr, blob.size);
+        //std::cout << "push rec to cache" << std::endl;
+        cache.push_back(pRec);
+
+        imcnt += 1;
+        
+        if(cache.size() % 10000 == 0) {
+            std::cout << "Processed: "<< cache.size() << std::endl;
+        }
+      }
+    }
+    double elapsed = dmlc::GetTime() - start;
+    
+    std::cout << "init cache done, " << elapsed << " sec elapsed, " << cache.size() << " images" << std::endl;
+}
+
 // create mean image.
 template<typename DType>
 inline void ImageRecordIOParser2<DType>::CreateMeanImg(void) {
@@ -621,7 +910,8 @@ inline void ImageRecordIOParser2<DType>::CreateMeanImg(void) {
     while (source_->NextChunk(&chunk)) {
       inst_order_.clear();
       // Parse chunk w/o putting anything in out
-      ParseChunk(NULL, NULL, batch_param_.batch_size, &chunk);
+      //ParseChunk(NULL, NULL, batch_param_.batch_size, &chunk);
+      ParseFromCache(NULL, NULL, batch_param_.batch_size);                                                 
       for (unsigned i = 0; i < inst_order_.size(); ++i) {
         std::pair<unsigned, unsigned> place = inst_order_[i];
         mshadow::Tensor<cpu, 3> outimg =
@@ -677,7 +967,8 @@ class ImageRecordIter2 : public IIterator<DataBatch> {
           if (*dptr == nullptr) {
             *dptr = new DataBatch();
           }
-          return parser_.ParseNext(*dptr);
+          //return parser_.ParseNext(*dptr);
+          return parser_.ParseNextFromCache(*dptr);                                         
           },
           [this]() { parser_.BeforeFirst(); });
     }
