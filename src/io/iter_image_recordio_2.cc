@@ -609,7 +609,7 @@ inline unsigned ImageRecordIOParser2<DType>::ParseFromCache(DType* data_dptr, re
       bool reach_max_buffered;
       #pragma omp critical
       {
-        reach_max_buffered = (gl_idx - current_size >= 200) || (cache_index >= cache.size());
+        reach_max_buffered = (gl_idx - current_size >= 200) || (cache_index >= cache.size()-1);
         if (!reach_max_buffered) {
           idx = gl_idx++;
           if (idx >= batch_param_.batch_size) {
