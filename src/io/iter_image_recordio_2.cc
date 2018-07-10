@@ -306,7 +306,7 @@ inline bool ImageRecordIOParser2<DType>::ParseNextFromCache(DataBatch *out) {
     // int n_to_copy;
     unsigned n_to_out = 0;
     if (n_parsed_ == 0) {
-      if (current_size < cache.size()) {
+      if (cache_index + 1 < cache.size()) {
       //if (source_->NextBatch(&chunk, batch_param_.batch_size)) {
         inst_order_.clear();
         inst_index_ = 0;
