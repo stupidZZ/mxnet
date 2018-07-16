@@ -65,6 +65,7 @@ class ImageRecordIOParser2 {
   // parse next set of records, return an array of
   // instance vector to the user
   inline bool ParseNext(DataBatch *out);
+  inline bool ParseNextFromRec(DataBatch *out);
   inline bool ParseNextFromCache(DataBatch *out);                                             
 
  private:
@@ -221,10 +222,12 @@ inline void ImageRecordIOParser2<DType>::Init(
       source_->HintChunkSize(64 << 20UL);
     }
   }
-  std::cout << "Begin InitCache" <<std::endl;
-  // Load all images to RAM
-  this->InitCache();
-  std::cout << "End InitCache" <<std::endl;
+  if(param_.use_cache_mode) {
+      std::cout << "Begin InitCache" <<std::endl;
+      // Load all images to RAM
+      this->InitCache();
+      std::cout << "End InitCache" <<std::endl;
+  }
   // Normalize init
   if (!std::is_same<DType, uint8_t>::value) {
     meanimg_.set_pad(false);
@@ -365,8 +368,20 @@ inline bool ImageRecordIOParser2<DType>::ParseNextFromCache(DataBatch *out) {
   }
   return true;
 }
+
 template<typename DType>
 inline bool ImageRecordIOParser2<DType>::ParseNext(DataBatch *out) {
+    if (param_.use_cache_mode) {
+        return ParseNextFromCache(out);
+    }
+    else {
+        return ParseNextFromRec(out);
+    }
+}
+
+
+template<typename DType>
+inline bool ImageRecordIOParser2<DType>::ParseNextFromRec(DataBatch *out) {
   if (overflow) {
     return false;
   }
@@ -910,8 +925,12 @@ inline void ImageRecordIOParser2<DType>::CreateMeanImg(void) {
     while (source_->NextChunk(&chunk)) {
       inst_order_.clear();
       // Parse chunk w/o putting anything in out
-      //ParseChunk(NULL, NULL, batch_param_.batch_size, &chunk);
-      ParseFromCache(NULL, NULL, batch_param_.batch_size);                                                 
+      if(param_.use_cache_mode) {
+        ParseFromCache(NULL, NULL, batch_param_.batch_size);                                                 
+      }
+      else {
+        ParseChunk(NULL, NULL, batch_param_.batch_size, &chunk);
+      }
       for (unsigned i = 0; i < inst_order_.size(); ++i) {
         std::pair<unsigned, unsigned> place = inst_order_[i];
         mshadow::Tensor<cpu, 3> outimg =
@@ -967,8 +986,7 @@ class ImageRecordIter2 : public IIterator<DataBatch> {
           if (*dptr == nullptr) {
             *dptr = new DataBatch();
           }
-          //return parser_.ParseNext(*dptr);
-          return parser_.ParseNextFromCache(*dptr);                                         
+          return parser_.ParseNext(*dptr);
           },
           [this]() { parser_.BeforeFirst(); });
     }
