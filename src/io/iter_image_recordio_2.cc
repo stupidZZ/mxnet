@@ -143,6 +143,7 @@ inline void ImageRecordIOParser2<DType>::Init(
   prefetch_param_.InitAllowUnknown(kwargs);
   n_parsed_ = 0;
   overflow = false;
+  printf("param_.use_cache_mode:%d\n",param_.use_cache_mode);
   rnd_.seed(kRandMagic + record_param_.seed);
   int maxthread, threadget;
   #pragma omp parallel

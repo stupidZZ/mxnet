@@ -124,7 +124,7 @@ struct ImageRecParserParam : public dmlc::Parameter<ImageRecParserParam> {
   /*! \brief the seed for chunk shuffling*/
   int shuffle_chunk_seed;
   /*! \brief use cache mode */
-  int use_cache_mode;
+  bool use_cache_mode;
 
   // declare parameters
   DMLC_DECLARE_PARAMETER(ImageRecParserParam) {
@@ -159,7 +159,7 @@ struct ImageRecParserParam : public dmlc::Parameter<ImageRecParserParam> {
         .describe("The data shuffle buffer size in MB. Only valid if shuffle is true.");
     DMLC_DECLARE_FIELD(shuffle_chunk_seed).set_default(0)
         .describe("The random seed for shuffling");
-    DMLC_DECLARE_FIELD(use_cache_mode).set_default(0)
+    DMLC_DECLARE_FIELD(use_cache_mode).set_default(true)
         .describe("Use cache mode");
   }
 };
